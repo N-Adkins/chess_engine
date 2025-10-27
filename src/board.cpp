@@ -172,7 +172,6 @@ void Board::pawnMoves(std::vector<Move>& out) {
 void Board::knightMoves(std::vector<Move>& out) {
     const std::uint64_t current = currentOccupied();
     const std::uint64_t next = nextOccupied();
-
     std::uint64_t current_knights = knight & current;
     while (current_knights) {
         const int from = popLSB(current_knights);
@@ -195,7 +194,7 @@ void Board::bishopMoves(std::vector<Move>& out) {
     std::uint64_t bishops = bishop & current;
     while (bishops) {
         const int from = popLSB(bishops);
-        std::uint64_t moves = bishopAttacks(from, (white | black) & ~(1 << from)) & ~current;
+        std::uint64_t moves = bishopAttacks(from, (white | black) & ~(1ULL << from)) & ~current;
         while (moves) {
             const int to = popLSB(moves);
             bool capture = (next & (1ULL << to)) != 0;
@@ -214,7 +213,7 @@ void Board::rookMoves(std::vector<Move>& out) {
     std::uint64_t rooks = rook & current;
     while (rooks) {
         const int from = popLSB(rooks);
-        std::uint64_t moves = rookAttacks(from, (white | black) & ~(1 << from)) & ~current;
+        std::uint64_t moves = rookAttacks(from, (white | black) & ~(1ULL << from)) & ~current;
         while (moves) {
             const int to = popLSB(moves);
             bool capture = (next & (1ULL << to)) != 0;
@@ -233,7 +232,7 @@ void Board::queenMoves(std::vector<Move>& out) {
     std::uint64_t queens = queen & current;
     while (queens) {
         const int from = popLSB(queens);
-        const std::uint64_t occupancy = (white | black) & ~(1 << from);
+        const std::uint64_t occupancy = (white | black) & ~(1ULL << from);
         std::uint64_t moves = queenAttacks(from, occupancy) & ~current;
         while (moves) {
             const int to = popLSB(moves);
@@ -248,7 +247,37 @@ void Board::queenMoves(std::vector<Move>& out) {
 }
 
 void Board::kingMoves(std::vector<Move>& out) {
-    (void)out;
+    const std::uint64_t current = currentOccupied();
+    const std::uint64_t next = nextOccupied();
+
+    std::uint64_t kings = king & current;
+    while (kings) {
+        const int from = popLSB(kings);
+        const std::uint64_t bb = 1ULL << from;
+
+        const std::uint64_t notA = ~FILE_A;
+        const std::uint64_t notH = ~FILE_H;
+
+        std::uint64_t attacks = 0;
+        attacks |= (bb << 8) | (bb >> 8);          // N, S
+        attacks |= (bb & notH) << 1;               // E
+        attacks |= (bb & notA) >> 1;               // W
+        attacks |= (bb & notH) << 9;               // NE
+        attacks |= (bb & notH) >> 7;               // SE
+        attacks |= (bb & notA) << 7;               // NW
+        attacks |= (bb & notA) >> 9;               // SW
+
+        std::uint64_t moves = attacks & ~current;
+        while (moves) {
+            const int to = popLSB(moves);
+            const bool capture = (next & (1ULL << to)) != 0;
+            out.push_back(Move{
+                .from = from,
+                .to = to,
+                .flags = capture ? static_cast<std::uint8_t>(MoveFlag::Capture) : static_cast<std::uint8_t>(0),
+            });
+        }
+    }
 }
 
 void Board::generatePseudoMoves(std::vector<Move>& out) {

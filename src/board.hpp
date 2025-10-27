@@ -35,10 +35,14 @@ struct Board {
 
     int half_moves = 0;
     bool white_turn = true;
+    bool white_castle_kingside = true;
+    bool white_castle_queenside = true;
+    bool black_castle_kingside = true;
+    bool black_castle_queenside = true;
 
     static Board initFEN(std::string_view fen);
     std::string toString() const;
-
+ 
     std::uint64_t currentOccupied() const; // Returns bitboard for color of current turn
     std::uint64_t nextOccupied() const; // Returns bitboard for color of next turn
 
@@ -49,6 +53,8 @@ struct Board {
     void queenMoves(std::vector<Move>& out);
     void kingMoves(std::vector<Move>& out);
     void generatePseudoMoves(std::vector<Move>& out);
+
+    int evaluate() const;
 
 private:
     Board() = default;

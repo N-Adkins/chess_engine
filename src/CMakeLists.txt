@@ -1,4 +1,4 @@
-add_executable(chess_engine main.cpp board.cpp)
+add_executable(chess_engine main.cpp board.cpp evaluate.cpp)
 
 set_target_properties(chess_engine PROPERTIES
     CXX_STANDARD 20
