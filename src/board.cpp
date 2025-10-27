@@ -1,5 +1,6 @@
 #include "board.hpp"
 
+#include <bit>
 #include <cctype>
 #include <ranges>
 #include <string>
@@ -7,6 +8,12 @@
 #include <vector>
 
 #include "magic.hpp"
+
+static int popLSB(std::uint64_t& bitboard) {
+    int count = std::countr_zero(bitboard);
+    bitboard &= bitboard - 1;
+    return count;
+}
 
 Board Board::initFEN(std::string_view fen) {
     Board board;
@@ -25,34 +32,41 @@ Board Board::initFEN(std::string_view fen) {
         ranks.emplace_back(rank.begin(), rank.end());
     }
 
+    // FEN ranks come from rank 8 (top) to rank 1 (bottom). We'll map
+    // them to bitboard squares where square 0 == a1 and square 63 == h8.
     for (int rank_i = 0; rank_i < 8; rank_i++) {
         std::string_view rank = ranks[rank_i];
-        for (int file = 0; file < 8; file++) {
-            char c = rank[file];
-            const bool is_white = std::isupper(c);
-            const bool is_number = std::isalnum(c) && !std::isalpha(c);
-            c = std::tolower(c);
-
-            if (is_number) {
-                file += c - '0';
+        int file = 0;
+        for (std::size_t i = 0; i < rank.size(); ++i) {
+            char c = rank[i];
+            if (std::isdigit(static_cast<unsigned char>(c))) {
+                // move file forward by the digit count
+                file += (c - '0');
                 continue;
             }
 
-            const int index = 1 >> (rank_i * 8 + file);
-            
-            (is_white ? board.white : board.black) |= (1 >> index);
-            const std::uint64_t piece = 1 >> index;
+            const bool is_white = std::isupper(static_cast<unsigned char>(c));
+            const char lc = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-            switch (c) {
-            case 'p': board.pawn |= piece; break;
-            case 'n': board.knight |= piece; break;
-            case 'b': board.bishop |= piece; break;
-            case 'r': board.rook |= piece; break;
-            case 'q': board.queen |= piece; break;
-            case 'k': board.king |= piece; break;
-            default: 
-                continue;
+            if (file < 0 || file >= 8) continue; // defensive
+
+            const int square = (7 - rank_i) * 8 + file;
+            const std::uint64_t bit = 1ULL << square;
+
+            if (is_white) board.white |= bit; else board.black |= bit;
+
+            switch (lc) {
+            case 'p': board.pawn |= bit; break;
+            case 'n': board.knight |= bit; break;
+            case 'b': board.bishop |= bit; break;
+            case 'r': board.rook |= bit; break;
+            case 'q': board.queen |= bit; break;
+            case 'k': board.king |= bit; break;
+            default:
+                break;
             }
+
+            ++file;
         }
     }
 
@@ -62,18 +76,186 @@ Board Board::initFEN(std::string_view fen) {
     return board;
 }
 
-std::uint64_t Board::bishopAttacks(int square, std::uint64_t occupancy) const {
-    const std::uint64_t blockers = occupancy & BISHOP_MASKS[square];
-    const std::uint64_t index = (blockers * BISHOP_MAGICS[square]) >> BISHOP_SHIFTS[square];
-    return BISHOP_TABLE[BISHOP_OFFSETS[square] + index];
+std::string Board::toString() const {
+    std::string output;
+    output.reserve(8 * 9);
+    for (int rank = 7; rank >= 0; --rank) {
+        for (int file = 0; file < 8; ++file) {
+            const int square = rank * 8 + file;
+            const std::uint64_t mask = 1ULL << square;
+            char ch = '-';
+            if ((pawn & mask) != 0) ch = 'p';
+            else if ((knight & mask) != 0) ch = 'n';
+            else if ((bishop & mask) != 0) ch = 'b';
+            else if ((rook & mask) != 0) ch = 'r';
+            else if ((queen & mask) != 0) ch = 'q';
+            else if ((king & mask) != 0) ch = 'k';
+
+            if ((white & mask) != 0 && ch != '-') ch = static_cast<char>(std::toupper(ch));
+            output.push_back(ch);
+        }
+        if (rank != 0) output.push_back('\n');
+    }
+
+    return output;
 }
 
-std::uint64_t Board::rookAttacks(int square, std::uint64_t occupancy) const {
-    const std::uint64_t blockers = occupancy & ROOK_MASKS[square];
-    const std::uint64_t index = (blockers * ROOK_MAGICS[square]) >> ROOK_SHIFTS[square];
-    return ROOK_TABLE[ROOK_OFFSETS[square] + index];
+std::uint64_t Board::currentOccupied() const {
+    return white_turn ? white : black;
 }
 
-std::uint64_t Board::queenAttacks(int square, std::uint64_t occupancy) const {
-    return bishopAttacks(square, occupancy) | rookAttacks(square, occupancy);
+std::uint64_t Board::nextOccupied() const {
+    return white_turn ? black : white; 
+}
+
+void Board::pawnMoves(std::vector<Move>& out) {
+    const std::uint64_t current = currentOccupied();
+    const std::uint64_t next = nextOccupied();
+    
+    std::uint64_t current_pawns = current & pawn;
+    while (current_pawns) {
+        const int from = popLSB(current_pawns);
+        std::uint64_t attacks = next & (white_turn ? WHITE_PAWN_ATTACKS[from] : BLACK_PAWN_ATTACKS[from]);
+        while (attacks) {
+            const int to = popLSB(attacks);
+            out.push_back(Move{
+                .from = from,
+                .to = to,
+                .flags = static_cast<std::uint8_t>(MoveFlag::Capture),
+            });
+        }
+
+        if (white_turn) {
+            const bool IS_LAST_RANK = from >= 56;
+            if (!IS_LAST_RANK) {
+                const int to = from + 8;
+                out.push_back(Move {
+                    .from = from,
+                    .to = to,
+                    .flags = 0,
+                });
+
+                if (from <= 15 && from > 7) {
+                    const int double_to = from + 16;
+                    out.push_back(Move {
+                        .from = from,
+                        .to = double_to,
+                        .flags = static_cast<std::uint8_t>(MoveFlag::DoublePush),
+                    });
+                }
+            }
+        } else {
+            const bool IS_LAST_RANK = from <= 8;
+            if (!IS_LAST_RANK) {
+                const int to = from - 8;
+                out.push_back(Move {
+                    .from = from,
+                    .to = to,
+                    .flags = 0,
+                });
+
+                if (from <= 55 && from > 47) {
+                    const int double_to = from - 16;
+                    if (next & (1 << double_to)) continue;
+                    out.push_back(Move {
+                        .from = from,
+                        .to = double_to,
+                        .flags = static_cast<std::uint8_t>(MoveFlag::DoublePush),
+                    });
+                }
+            }
+        }
+    }
+
+}
+
+void Board::knightMoves(std::vector<Move>& out) {
+    const std::uint64_t current = currentOccupied();
+    const std::uint64_t next = nextOccupied();
+
+    std::uint64_t current_knights = knight & current;
+    while (current_knights) {
+        const int from = popLSB(current_knights);
+        std::uint64_t moves = KNIGHT_ATTACKS[from] & ~current;
+        while (moves) {
+            const int to = popLSB(moves);
+            const bool capture = ((1ULL << to) & next) != 0;
+            out.push_back(Move {
+                .from = from,
+                .to = to,
+                .flags = capture ? static_cast<std::uint8_t>(MoveFlag::Capture) : static_cast<std::uint8_t>(0),
+            });
+        }
+    }
+}
+
+void Board::bishopMoves(std::vector<Move>& out) {
+    const std::uint64_t current = currentOccupied();
+    const std::uint64_t next = nextOccupied();
+    std::uint64_t bishops = bishop & current;
+    while (bishops) {
+        const int from = popLSB(bishops);
+        std::uint64_t moves = bishopAttacks(from, (white | black) & ~(1 << from)) & ~current;
+        while (moves) {
+            const int to = popLSB(moves);
+            bool capture = (next & (1ULL << to)) != 0;
+            out.push_back(Move {
+                .from = from,
+                .to = to,
+                .flags = capture ? static_cast<std::uint8_t>(MoveFlag::Capture) : static_cast<std::uint8_t>(0),
+            });
+        }
+    }
+}
+
+void Board::rookMoves(std::vector<Move>& out) {
+    const std::uint64_t current = currentOccupied();
+    const std::uint64_t next = nextOccupied();
+    std::uint64_t rooks = rook & current;
+    while (rooks) {
+        const int from = popLSB(rooks);
+        std::uint64_t moves = rookAttacks(from, (white | black) & ~(1 << from)) & ~current;
+        while (moves) {
+            const int to = popLSB(moves);
+            bool capture = (next & (1ULL << to)) != 0;
+            out.push_back(Move {
+                .from = from,
+                .to = to,
+                .flags = capture ? static_cast<std::uint8_t>(MoveFlag::Capture) : static_cast<std::uint8_t>(0),
+            });
+        }
+    }
+}
+
+void Board::queenMoves(std::vector<Move>& out) {
+    const std::uint64_t current = currentOccupied();
+    const std::uint64_t next = nextOccupied();
+    std::uint64_t queens = queen & current;
+    while (queens) {
+        const int from = popLSB(queens);
+        const std::uint64_t occupancy = (white | black) & ~(1 << from);
+        std::uint64_t moves = queenAttacks(from, occupancy) & ~current;
+        while (moves) {
+            const int to = popLSB(moves);
+            bool capture = (next & (1ULL << to)) != 0;
+            out.push_back(Move {
+                .from = from,
+                .to = to,
+                .flags = capture ? static_cast<std::uint8_t>(MoveFlag::Capture) : static_cast<std::uint8_t>(0),
+            });
+        }
+    }
+}
+
+void Board::kingMoves(std::vector<Move>& out) {
+    (void)out;
+}
+
+void Board::generatePseudoMoves(std::vector<Move>& out) {
+    pawnMoves(out);
+    knightMoves(out);
+    bishopMoves(out);
+    rookMoves(out);
+    queenMoves(out);
+    kingMoves(out);
 }

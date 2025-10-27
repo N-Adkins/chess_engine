@@ -7,9 +7,18 @@
 
 constexpr std::string_view STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
+enum class MoveFlag : uint8_t {
+    Quiet = 0,
+    Capture = 1 << 0,
+    DoublePush = 1 << 1,
+    EnPassant = 1 << 2,
+    Castle = 1 << 3,
+    Promotion = 1 << 4,
+};
+
 struct Move {
     int from, to;
-    
+    uint8_t flags;
 };
 
 // Magic bitboard data
@@ -28,10 +37,18 @@ struct Board {
     bool white_turn = true;
 
     static Board initFEN(std::string_view fen);
+    std::string toString() const;
 
-    std::uint64_t bishopAttacks(int square, std::uint64_t occupancy) const;
-    std::uint64_t rookAttacks(int square, std::uint64_t occupancy) const;
-    std::uint64_t queenAttacks(int square, std::uint64_t occupancy) const;
+    std::uint64_t currentOccupied() const; // Returns bitboard for color of current turn
+    std::uint64_t nextOccupied() const; // Returns bitboard for color of next turn
+
+    void pawnMoves(std::vector<Move>& out);
+    void knightMoves(std::vector<Move>& out);
+    void bishopMoves(std::vector<Move>& out);
+    void rookMoves(std::vector<Move>& out);
+    void queenMoves(std::vector<Move>& out);
+    void kingMoves(std::vector<Move>& out);
+    void generatePseudoMoves(std::vector<Move>& out);
 
 private:
     Board() = default;
@@ -39,6 +56,12 @@ private:
 
 constexpr std::uint64_t FILE_A = 0x0101010101010101ULL;
 constexpr std::uint64_t FILE_H = 0x8080808080808080ULL;
+constexpr std::uint64_t FILE_B = FILE_A << 1;
+constexpr std::uint64_t FILE_G = FILE_H >> 1;
+constexpr std::uint64_t RANK_1 = 0xFF;
+constexpr std::uint64_t RANK_2 = RANK_1 << 8;
+constexpr std::uint64_t RANK_7 = RANK_1 << 48;
+constexpr std::uint64_t RANK_8 = 0xFF00000000000000ULL;
 
 consteval std::array<std::uint64_t, 64> makeWhitePawnAttacks() {
     std::array<std::uint64_t, 64> table{};
@@ -68,15 +91,17 @@ consteval std::array<std::uint64_t, 64> makeKnightAttacks() {
         const auto bit = 1ULL << square;
         std::uint64_t attacks = 0;
 
-        if ((bit & ~(FILE_A | (FILE_A << 8))) != 0) attacks |= bit << 15; // two left, one up
-        if ((bit & ~(FILE_H | (FILE_H << 8))) != 0) attacks |= bit << 17; // two right, one up
-        if ((bit & ~(FILE_A | (FILE_A >> 8))) != 0) attacks |= bit >> 17; // two left, one down
-        if ((bit & ~(FILE_H | (FILE_H >> 8))) != 0) attacks |= bit >> 15; // two right, one down
+        // Up moves
+        if ((bit & (FILE_A | FILE_B)) == 0 && (bit & RANK_8) == 0) attacks |= bit << 6;   // two left, one up
+        if ((bit & (FILE_G | FILE_H)) == 0 && (bit & RANK_8) == 0) attacks |= bit << 10;  // two right, one up
+        if ((bit & FILE_A) == 0 && (bit & (RANK_7 | RANK_8)) == 0) attacks |= bit << 15;  // one left, two up
+        if ((bit & FILE_H) == 0 && (bit & (RANK_7 | RANK_8)) == 0) attacks |= bit << 17;  // one right, two up
 
-        if ((bit & ~(FILE_A | (FILE_A << 16))) != 0) attacks |= bit << 6;  // one left, two up
-        if ((bit & ~(FILE_H | (FILE_H << 16))) != 0) attacks |= bit << 10; // one right, two up
-        if ((bit & ~(FILE_A | (FILE_A >> 16))) != 0) attacks |= bit >> 10; // one left, two down
-        if ((bit & ~(FILE_H | (FILE_H >> 16))) != 0) attacks |= bit >> 6;  // one right, two down
+        // Down moves
+        if ((bit & (FILE_G | FILE_H)) == 0 && (bit & RANK_1) == 0) attacks |= bit >> 6;   // two right, one down
+        if ((bit & (FILE_A | FILE_B)) == 0 && (bit & RANK_1) == 0) attacks |= bit >> 10;  // two left, one down
+        if ((bit & FILE_H) == 0 && (bit & (RANK_1 | RANK_2)) == 0) attacks |= bit >> 15;  // one right, two down
+        if ((bit & FILE_A) == 0 && (bit & (RANK_1 | RANK_2)) == 0) attacks |= bit >> 17;  // one left, two down
 
         table[square] = attacks;
     }
