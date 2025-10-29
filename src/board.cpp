@@ -108,7 +108,7 @@ std::uint64_t Board::nextOccupied() const {
     return white_turn ? black : white; 
 }
 
-void Board::pawnMoves(std::vector<Move>& out) {
+void Board::pawnMoves(std::vector<Move>& out) const {
     const std::uint64_t current = currentOccupied();
     const std::uint64_t next = nextOccupied();
     
@@ -169,7 +169,7 @@ void Board::pawnMoves(std::vector<Move>& out) {
 
 }
 
-void Board::knightMoves(std::vector<Move>& out) {
+void Board::knightMoves(std::vector<Move>& out) const {
     const std::uint64_t current = currentOccupied();
     const std::uint64_t next = nextOccupied();
     std::uint64_t current_knights = knight & current;
@@ -188,7 +188,7 @@ void Board::knightMoves(std::vector<Move>& out) {
     }
 }
 
-void Board::bishopMoves(std::vector<Move>& out) {
+void Board::bishopMoves(std::vector<Move>& out) const {
     const std::uint64_t current = currentOccupied();
     const std::uint64_t next = nextOccupied();
     std::uint64_t bishops = bishop & current;
@@ -207,7 +207,7 @@ void Board::bishopMoves(std::vector<Move>& out) {
     }
 }
 
-void Board::rookMoves(std::vector<Move>& out) {
+void Board::rookMoves(std::vector<Move>& out) const {
     const std::uint64_t current = currentOccupied();
     const std::uint64_t next = nextOccupied();
     std::uint64_t rooks = rook & current;
@@ -226,7 +226,7 @@ void Board::rookMoves(std::vector<Move>& out) {
     }
 }
 
-void Board::queenMoves(std::vector<Move>& out) {
+void Board::queenMoves(std::vector<Move>& out) const {
     const std::uint64_t current = currentOccupied();
     const std::uint64_t next = nextOccupied();
     std::uint64_t queens = queen & current;
@@ -246,7 +246,7 @@ void Board::queenMoves(std::vector<Move>& out) {
     }
 }
 
-void Board::kingMoves(std::vector<Move>& out) {
+void Board::kingMoves(std::vector<Move>& out) const {
     const std::uint64_t current = currentOccupied();
     const std::uint64_t next = nextOccupied();
 
@@ -280,11 +280,136 @@ void Board::kingMoves(std::vector<Move>& out) {
     }
 }
 
-void Board::generatePseudoMoves(std::vector<Move>& out) {
+void Board::generatePseudoMoves(std::vector<Move>& out) const {
     pawnMoves(out);
     knightMoves(out);
     bishopMoves(out);
     rookMoves(out);
     queenMoves(out);
     kingMoves(out);
+}
+
+CheckInfo Board::analyzeChecks() const {
+    CheckInfo info;
+    const std::uint64_t current = white_turn ? white : black;
+    const std::uint64_t next = white_turn ? black : white;
+    const int king_square = std::countr_zero(king & current) - 1;
+
+    info.king_unsafe |= KNIGHT_ATTACKS[king_square] & (knight & next);
+    info.king_unsafe |= (white ? BLACK_PAWN_ATTACKS[king_square] : WHITE_PAWN_ATTACKS[king_square]) & (pawn & next);
+    info.king_unsafe |= (king & next) & BISHOP_RAYS[king_square];
+
+    const std::uint64_t occupancy = white | black;
+    auto addSlider = [&](
+        std::uint64_t sliders,
+        auto attacksFn
+    ) {
+        std::uint64_t rays = attacksFn(king_square, occupancy) & sliders;
+        while (rays) {
+            const int from = popLSB(rays);
+            std::uint64_t between = attacksFn(from, occupancy ^ (1ULL << king_square)) & BISHOP_RAYS[king_square];
+            std::uint64_t blockers = between & current;
+            if (!blockers) {
+                info.checkers |= 1ULL << from;
+                info.block_mask &= ((attacksFn(king_square, 0ULL) & attacksFn(from, 0ULL)) | (1ULL << from));
+            } else if ((blockers & (blockers - 1)) == 0) {
+                info.pinned |= blockers;
+                info.pin_dirs[std::countr_zero(blockers)] = ((1ULL << from) | between | (1ULL << king_square));
+            }
+        } 
+    };
+
+    addSlider((bishop & next) | (queen & next), [&](int square, std::uint64_t occupancy) { 
+        return bishopAttacks(square, occupancy);
+    });
+    addSlider((rook & next) | (queen & next), [&](int square, std::uint64_t occupancy) { 
+        return rookAttacks(square, occupancy);
+    });
+
+    info.king_unsafe |= info.checkers;
+    info.king_unsafe |= bishopAttacks(king_square, occupancy) & (bishop | queen) & next;
+    info.king_unsafe |= rookAttacks(king_square, occupancy) & (rook | queen) & next;
+
+    return info;
+}
+
+void Board::generateLegalMoves(std::vector<Move>& out) {
+    out.clear();
+    std::vector<Move> pseudo;
+    generatePseudoMoves(pseudo);
+
+    const auto check_info = analyzeChecks();
+    std::stack<Board> undo;
+
+    for (const Move& move : pseudo) {
+        if ((check_info.checkers && ! (check_info.block_mask & (1ULL << move.to)) &&
+            !(check_info.checkers & (1ULL << move.to))) &&
+            !(move.flags & static_cast<std::uint8_t>(MoveFlag::Castle))
+        ) {
+            continue;
+        }
+
+        if (check_info.pinned & (1ULL << move.from)) {
+            if (!(check_info.pin_dirs[move.from] & (1ULL << move.to))) {
+                continue;
+            }
+        }
+
+        if (move.flags & static_cast<std::uint8_t>(MoveFlag::Castle)) {
+            if (check_info.king_unsafe & ((1ULL << move.from) | (1ULL << move.to))) {
+                continue;
+            }
+        }
+
+        makeMove(move, undo);
+        const CheckInfo after_check_info = analyzeChecks();
+        const bool illegal = after_check_info.king_unsafe & (white_turn ? (king & white) : (king & black));
+        unmakeMove(undo);
+        if (!illegal) {
+            out.push_back(move);
+        }
+    }
+}
+
+void Board::makeMove(const Move& move, std::stack<Board>& undo_stack) {
+    undo_stack.push(*this);
+
+    const std::uint64_t from_board = 1ULL << move.from;
+    const std::uint64_t to_board = 1ULL << move.from;
+    const std::uint64_t move_board = from_board | to_board;
+
+    std::uint64_t* mover = nullptr;
+    if (pawn & from_board) {
+        mover = &pawn;
+    } else if (knight & from_board) {
+        mover = &knight;
+    } else if (bishop & from_board) {
+        mover = &bishop;
+    } else if (rook & from_board) {
+        mover = &rook;
+    } else if (queen & from_board) {
+        mover = &queen;
+    } else if (king & from_board) {
+        mover = &king;
+    }
+    assert(mover != nullptr);
+
+    *mover ^= move_board;
+    (white_turn ? white : black) ^= move_board;
+
+    if (move.flags & static_cast<std::uint8_t>(MoveFlag::Capture)) {
+        std::uint64_t& enemy = white_turn ? black : white;
+        enemy ^= to_board;
+        pawn &= ~to_board;
+        knight &= ~to_board;
+        bishop &= ~to_board;
+        rook &= ~to_board;
+        queen &= ~to_board;
+        king &= ~to_board;
+    }
+}
+
+void Board::unmakeMove(std::stack<Board>& undo_stack) {
+    *this = undo_stack.top();
+    undo_stack.pop();
 }

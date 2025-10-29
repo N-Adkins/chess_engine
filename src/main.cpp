@@ -13,11 +13,11 @@ constexpr static std::string squareToName(int square) {
 int main() {
     initMagic();
 
-    Board board = Board::initFEN("1Q3bnr/2p2ppp/2p1k3/P1P3B1/2P1P1N1/8/P4PPP/RN2K2R w KQ - 1 16");
+    Board board = Board::initFEN("rnbqk1nr/pp1p1ppp/2p5/1B2p3/1b2P3/2P5/PP1P1PPP/RNBQK1NR w KQkq - 0 4");
     std::cout << board.toString() << "\n";
 
     std::vector<Move> moves;
-    board.generatePseudoMoves(moves);
+    board.generateLegalMoves(moves);
 
     for (auto& move : moves) {
         std::string from = squareToName(move.from);

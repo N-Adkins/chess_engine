@@ -2,7 +2,10 @@
 
 #include <array>
 #include <cstdint>
+#include <stack>
+#include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 constexpr std::string_view STARTING_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -19,6 +22,14 @@ enum class MoveFlag : uint8_t {
 struct Move {
     int from, to;
     uint8_t flags;
+};
+
+struct CheckInfo {
+    std::uint64_t checkers = 0;
+    std::uint64_t block_mask = 0ULL;
+    std::uint64_t pinned = 0;
+    std::uint64_t king_unsafe = 0;
+    std::uint64_t pin_dirs[64];
 };
 
 // Magic bitboard data
@@ -46,13 +57,19 @@ struct Board {
     std::uint64_t currentOccupied() const; // Returns bitboard for color of current turn
     std::uint64_t nextOccupied() const; // Returns bitboard for color of next turn
 
-    void pawnMoves(std::vector<Move>& out);
-    void knightMoves(std::vector<Move>& out);
-    void bishopMoves(std::vector<Move>& out);
-    void rookMoves(std::vector<Move>& out);
-    void queenMoves(std::vector<Move>& out);
-    void kingMoves(std::vector<Move>& out);
-    void generatePseudoMoves(std::vector<Move>& out);
+    void pawnMoves(std::vector<Move>& out) const;
+    void knightMoves(std::vector<Move>& out) const;
+    void bishopMoves(std::vector<Move>& out) const;
+    void rookMoves(std::vector<Move>& out) const;
+    void queenMoves(std::vector<Move>& out) const;
+    void kingMoves(std::vector<Move>& out) const;
+    void generatePseudoMoves(std::vector<Move>& out) const;
+
+    CheckInfo analyzeChecks() const;
+    void generateLegalMoves(std::vector<Move>& out);
+
+    void makeMove(const Move& move, std::stack<Board>& undo_stack);
+    void unmakeMove(std::stack<Board>& undo_stack);
 
     int evaluate() const;
 
@@ -117,3 +134,37 @@ consteval std::array<std::uint64_t, 64> makeKnightAttacks() {
 inline constexpr auto WHITE_PAWN_ATTACKS = makeWhitePawnAttacks();
 inline constexpr auto BLACK_PAWN_ATTACKS = makeBlackPawnAttacks();
 inline constexpr auto KNIGHT_ATTACKS = makeKnightAttacks();
+
+template <typename T, std::enable_if_t<std::is_arithmetic_v<T>, int> = 0>
+constexpr auto constAbs(const T& x) noexcept {
+    return x < 0 ? -x : x;
+}
+
+constexpr std::array<std::uint64_t, 64> makeRayTable(std::initializer_list<int> deltas) {
+    std::array<std::uint64_t, 64> table{};
+    for (int sq = 0; sq < 64; ++sq) {
+        std::uint64_t mask = 0;
+        for (int delta : deltas) {
+            int current = sq;
+            while (true) {
+                const int next = current + delta;
+                if (next < 0 || next >= 64) break;
+
+                const int curRank = current / 8;
+                const int curFile = current % 8;
+                const int nextRank = next / 8;
+                const int nextFile = next % 8;
+
+                if (constAbs(nextRank - curRank) > 1 || constAbs(nextFile - curFile) > 1) break;
+
+                mask |= 1ULL << next;
+                current = next;
+            }
+        }
+        table[static_cast<std::size_t>(sq)] = mask;
+    }
+    return table;
+}
+
+inline constexpr auto ROOK_RAYS = makeRayTable({8, -8, 1, -1});
+inline constexpr auto BISHOP_RAYS = makeRayTable({9, 7, -7, -9});

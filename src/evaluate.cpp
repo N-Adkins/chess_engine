@@ -43,5 +43,5 @@ int Board::evaluate() const {
     const int white_score = evaluateSide(*this, true);
     const int black_score = evaluateSide(*this, false);
     const int score = white_score - black_score;
-    return score + (white_turn ? TEMPO_SCORE : -TEMPO_SCORE);
+    return (score + (white_turn ? TEMPO_SCORE : -TEMPO_SCORE)) * (white_turn ? 1 : -1);
 }
