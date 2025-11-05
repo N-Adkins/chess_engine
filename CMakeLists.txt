@@ -5,14 +5,27 @@ project(chess_engine VERSION 0.1.0 LANGUAGES CXX)
 # Export compile commands for tooling support.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Ensure MSVC generates Program Database (PDB) debug info in Debug/RelWithDebInfo.
 if(MSVC)
-	# /Zi equivalent via CMake property; applies to C and C++.
 	set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>")
-	# Use the dynamic runtime by default: /MD in Release and /MDd in Debug.
 	if(NOT DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
 		set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 	endif()
 endif()
 
 add_subdirectory(src)
+
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIGURATION>")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIGURATION>")
+
+add_subdirectory(vendored/SDL EXCLUDE_FROM_ALL)
+add_subdirectory(vendored/SDL_image EXCLUDE_FROM_ALL)
+
+target_link_libraries(chess_engine PRIVATE 
+	SDL3::SDL3
+	SDL3_image::SDL3_image
+)
+
+target_include_directories(chess_engine PRIVATE 
+	vendored/SDL/include
+	vendored/SDL_image/include
+)
