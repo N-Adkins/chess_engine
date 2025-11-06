@@ -221,6 +221,9 @@ int main() {
             SDL_Texture* tex = texture_for_piece(c);
             if (!tex) continue;
             int pad = tile_size / 100;
+            if (selected_square == sq) {
+                pad = -4;
+            }
             SDL_FRect destination{
                 static_cast<float>(offset_x + file * tile_size + pad),
                 static_cast<float>(offset_y + screen_rank * tile_size + pad),
